@@ -3,46 +3,37 @@ from discord.ext import commands
 from discord import app_commands
 import aiohttp
 from datetime import datetime
-import json
 import os
 import asyncio
 from dotenv import load_dotenv
 
 load_dotenv()
-RAPIDAPI_KEY = os.getenv("RAPIDAPI_KEY")
 CONFIG_FILE = "like_channels.json"
 
 class LikeCommands(commands.Cog):
     def __init__(self, bot):
         self.bot = bot
-        self.api_host = "https://free-fire-like1.p.rapidapi.com"
+        self.api_host = "https://likes.api.freefireofficial.com/api"
         self.config_data = self.load_config()
         self.cooldowns = {}
         self.session = aiohttp.ClientSession()
 
-        self.headers = {}
-        if RAPIDAPI_KEY:
-            self.headers = {
-                'x-rapidapi-key': RAPIDAPI_KEY,
-                'x-rapidapi-host': "free-fire-like1.p.rapidapi.com"
-            }
-
     def load_config(self):
-        default_config = {
-            "servers": {}
-        }
+        default_config = {"servers": {}}
         if os.path.exists(CONFIG_FILE):
             try:
+                import json
                 with open(CONFIG_FILE, 'r') as f:
                     loaded_config = json.load(f)
                     loaded_config.setdefault("servers", {})
                     return loaded_config
-            except json.JSONDecodeError:
-                print(f"WARNING: The configuration file '{CONFIG_FILE}' is corrupt or empty. Resetting to default configuration.")
+            except Exception:
+                print(f"WARNING: Config file '{CONFIG_FILE}' is invalid. Resetting to default.")
         self.save_config(default_config)
         return default_config
 
     def save_config(self, config_to_save=None):
+        import json
         data_to_save = config_to_save if config_to_save is not None else self.config_data
         temp_file = CONFIG_FILE + ".tmp"
         with open(temp_file, 'w') as f:
@@ -56,33 +47,6 @@ class LikeCommands(commands.Cog):
         like_channels = self.config_data["servers"].get(guild_id, {}).get("like_channels", [])
         return not like_channels or str(ctx.channel.id) in like_channels
 
-    async def cog_load(self):
-        pass
-
-    @commands.hybrid_command(name="setlikechannel", description="Sets the channels where the /like command is allowed.")
-    @commands.has_permissions(administrator=True)
-    @app_commands.describe(channel="The channel to allow/disallow the /like command in.")
-    async def set_like_channel(self, ctx: commands.Context, channel: discord.TextChannel):
-        if ctx.guild is None:
-            await ctx.send("This command can only be used in a server.", ephemeral=True)
-            return
-
-        guild_id = str(ctx.guild.id)
-        server_config = self.config_data["servers"].setdefault(guild_id, {})
-        like_channels = server_config.setdefault("like_channels", [])
-
-        channel_id_str = str(channel.id)
-
-        if channel_id_str in like_channels:
-            like_channels.remove(channel_id_str)
-            self.save_config()
-            await ctx.send(f"✅ Channel {channel.mention} has been **removed** from allowed channels for /like commands. The command is now **disallowed** there.", ephemeral=True)
-        else:
-            like_channels.append(channel_id_str)
-            self.save_config()
-            await ctx.send(f"✅ Channel {channel.mention} is now **allowed** for /like commands. The command will **only** work in specified channels if any are set.", ephemeral=True)
-
-    # 🔥 Updated like command with region + uid
     @commands.hybrid_command(name="like", description="Sends likes to a Free Fire player")
     @app_commands.describe(
         region="Player region (e.g., IN, BR, SG)",
@@ -115,22 +79,23 @@ class LikeCommands(commands.Cog):
 
         try:
             async with ctx.typing():
-                async with self.session.get(
-                    f"{self.api_host}/like?uid={uid}&region={region}",
-                    headers=self.headers
-                ) as response:
+                api_url = f"{self.api_host}/{region}/{uid}?key=RebelTheLvB09"
+                async with self.session.get(api_url) as response:
                     if response.status == 404:
                         await self._send_player_not_found(ctx, uid)
                         return
-                    if response.status == 429:
-                        await self._send_api_limit_reached(ctx)
-                        return
                     if response.status != 200:
-                        print(f"API Error: {response.status} - {await response.text()}")
+                        text = await response.text()
+                        print(f"API Error: {response.status} - {text}")
                         await self._send_api_error(ctx)
                         return
 
                     data = await response.json()
+                    if not data or "player" not in data:
+                        await self._send_player_not_found(ctx, uid)
+                        return
+
+                    # Embed format
                     embed = discord.Embed(
                         title="FREE FIRE LIKE",
                         color=0x2ECC71 if data.get("status") == 1 else 0xE74C3C,
@@ -165,23 +130,6 @@ class LikeCommands(commands.Cog):
     async def _send_player_not_found(self, ctx, uid):
         embed = discord.Embed(title="❌ Player Not Found", description=f"The UID {uid} does not exist or is not accessible.", color=0xE74C3C)
         embed.add_field(name="Tip", value="Make sure that:\n- The UID is correct\n- The player is not private", inline=False)
-        await ctx.send(embed=embed, ephemeral=True)
-        
-    async def _send_api_limit_reached(self, ctx):
-        embed = discord.Embed(
-            title="⚠️ API Rate Limit Reached",
-            description="You have reached the maximum number of requests allowed by the API.",
-            color=0xF1C40F
-        )
-        embed.add_field(
-            name="Tip",
-            value=(
-                "- Wait a few minutes before trying again\n"
-                "- Consider upgrading your API plan if this happens often\n"
-                "- Avoid sending too many requests in a short time"
-            ),
-            inline=False
-        )
         await ctx.send(embed=embed, ephemeral=True)
 
     async def _send_api_error(self, ctx):

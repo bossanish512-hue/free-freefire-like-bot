@@ -82,9 +82,13 @@ class LikeCommands(commands.Cog):
             self.save_config()
             await ctx.send(f"✅ Channel {channel.mention} is now **allowed** for /like commands. The command will **only** work in specified channels if any are set.", ephemeral=True)
 
+    # 🔥 Updated like command with region + uid
     @commands.hybrid_command(name="like", description="Sends likes to a Free Fire player")
-    @app_commands.describe(uid="Player UID (numbers only, minimum 6 characters)")
-    async def like_command(self, ctx: commands.Context, uid: str):
+    @app_commands.describe(
+        region="Player region (e.g., IN, BR, SG)",
+        uid="Player UID (numbers only, minimum 6 characters)"
+    )
+    async def like_command(self, ctx: commands.Context, region: str, uid: str):
         is_slash = ctx.interaction is not None
 
         if not await self.check_channel(ctx):
@@ -109,15 +113,18 @@ class LikeCommands(commands.Cog):
             await ctx.reply("Invalid UID. It must contain only numbers and be at least 6 characters long.", mention_author=False, ephemeral=is_slash)
             return
 
-
         try:
             async with ctx.typing():
-                async with self.session.get(f"{self.api_host}/like?uid={uid}", headers=self.headers) as response:
+                async with self.session.get(
+                    f"{self.api_host}/like?uid={uid}&region={region}",
+                    headers=self.headers
+                ) as response:
                     if response.status == 404:
                         await self._send_player_not_found(ctx, uid)
                         return
-                    if response.status ==429 :
-                        await self._send_api_limit_reached
+                    if response.status == 429:
+                        await self._send_api_limit_reached(ctx)
+                        return
                     if response.status != 200:
                         print(f"API Error: {response.status} - {await response.text()}")
                         await self._send_api_error(ctx)
@@ -136,6 +143,7 @@ class LikeCommands(commands.Cog):
                             f"┌  ACCOUNT\n"
                             f"├─ NICKNAME: {data.get('player', 'Unknown')}\n"
                             f"├─ UID: {uid}\n"
+                            f"├─ REGION: {region}\n"
                             f"└─ RESULT:\n"
                             f"   ├─ ADDED: +{data.get('likes_added', 0)}\n"
                             f"   ├─ BEFORE: {data.get('likes_before', 'N/A')}\n"
@@ -163,7 +171,7 @@ class LikeCommands(commands.Cog):
         embed = discord.Embed(
             title="⚠️ API Rate Limit Reached",
             description="You have reached the maximum number of requests allowed by the API.",
-            color=0xF1C40F  # jaune/orangé
+            color=0xF1C40F
         )
         embed.add_field(
             name="Tip",
@@ -175,7 +183,6 @@ class LikeCommands(commands.Cog):
             inline=False
         )
         await ctx.send(embed=embed, ephemeral=True)
-
 
     async def _send_api_error(self, ctx):
         embed = discord.Embed(title="⚠️ Service Unavailable", description="The Free Fire API is not responding at the moment.", color=0xF39C12)
